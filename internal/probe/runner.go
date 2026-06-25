@@ -57,6 +57,10 @@ func CompileSchemas(ctx context.Context, cfg *config.Config, configDir string) (
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(configDir, path)
 		}
+		abs, err := filepath.Abs(abs)
+		if err != nil {
+			return nil, fmt.Errorf("resolve json schema %q: %w", path, err)
+		}
 		fileURL := (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String()
 		schema, err := compiler.Compile(fileURL)
 		if err != nil {

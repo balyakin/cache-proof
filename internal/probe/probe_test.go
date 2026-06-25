@@ -43,6 +43,29 @@ func TestHTTPStatusSchemaAndBaselineEquality(t *testing.T) {
 	require.True(t, result.Passed, result.Failures)
 }
 
+func TestCompileSchemasWithRelativeConfigDir(t *testing.T) {
+	dir := t.TempDir()
+	projectDir := filepath.Join(dir, "project")
+	schemaDir := filepath.Join(projectDir, "schemas")
+	require.NoError(t, os.MkdirAll(schemaDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(schemaDir, "product.json"), []byte(`{"type":"object"}`), 0o644))
+	previousDir, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(dir))
+	t.Cleanup(func() {
+		require.NoError(t, os.Chdir(previousDir))
+	})
+	cfg := &config.Config{Probes: []config.Probe{{
+		Name:   "catalog",
+		HTTP:   &config.HTTPProbe{Method: "GET", URL: "http://cacheproof.test"},
+		Assert: config.Assertion{JSONSchema: "schemas/product.json"},
+	}}}
+
+	schemas, err := CompileSchemas(context.Background(), cfg, "project")
+	require.NoError(t, err)
+	require.Contains(t, schemas, "schemas/product.json")
+}
+
 func TestHTTPStatusFailureAndExpectFail(t *testing.T) {
 	server := testutil.JSONServer(http.StatusInternalServerError, `{"error":"broken"}`)
 	defer server.Close()
