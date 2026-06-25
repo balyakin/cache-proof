@@ -1,0 +1,32 @@
+<svg width="1160" height="620" viewBox="0 0 1160 620" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1160" height="620" rx="18" fill="#101418"/>
+  <rect x="28" y="28" width="1104" height="564" rx="14" fill="#151B21" stroke="#2B3640"/>
+  <circle cx="60" cy="58" r="8" fill="#FF5F57"/>
+  <circle cx="86" cy="58" r="8" fill="#FFBD2E"/>
+  <circle cx="112" cy="58" r="8" fill="#28C840"/>
+  <text x="52" y="112" fill="#C9D1D9" font-family="Menlo, Consolas, monospace" font-size="24">
+    $ cacheproof test --config examples/go-shop/cacheproof.yml --report-json cacheproof.json
+  </text>
+  <text x="52" y="170" fill="#8BE9A9" font-family="Menlo, Consolas, monospace" font-size="24">
+    baseline        PASS   2 probes passed
+  </text>
+  <text x="52" y="212" fill="#8BE9A9" font-family="Menlo, Consolas, monospace" font-size="24">
+    random-miss     PASS   2 probes passed
+  </text>
+  <text x="52" y="254" fill="#FF7B72" font-family="Menlo, Consolas, monospace" font-size="24">
+    redis-down      FAIL   checkout: expected status 200, got 500
+  </text>
+  <text x="52" y="296" fill="#F2CC60" font-family="Menlo, Consolas, monospace" font-size="24">
+    ttl-policy      WARN   3 keys matching "product:*" have no expiration
+  </text>
+  <text x="52" y="370" fill="#FF7B72" font-family="Menlo, Consolas, monospace" font-size="24">
+    Cache disposability: FAILED  (1 failed, 1 warning, 2 passed)
+  </text>
+  <text x="52" y="454" fill="#C9D1D9" font-family="Menlo, Consolas, monospace" font-size="24">
+    $ jq '.disposable, .summary' cacheproof.json
+  </text>
+  <text x="52" y="512" fill="#FF7B72" font-family="Menlo, Consolas, monospace" font-size="24">false</text>
+  <text x="52" y="554" fill="#C9D1D9" font-family="Menlo, Consolas, monospace" font-size="24">
+    {"failed":1,"warnings":1,"passed":2}
+  </text>
+</svg>

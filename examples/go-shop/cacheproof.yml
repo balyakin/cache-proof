@@ -1,0 +1,74 @@
+version: 1
+
+proxy:
+  listen: "127.0.0.1:6380"
+  upstream: "127.0.0.1:6379"
+  upstream_username_env: ""
+  upstream_password_env: ""
+
+seed: 1
+probe_timeout: "5s"
+warmup_retries: 1
+warmup_delay: "200ms"
+
+reset_command:
+  argv: ["curl", "-fsS", "-X", "POST", "http://127.0.0.1:8000/test/reset"]
+
+safety:
+  allow_key_deletes: false
+  max_keys_delete: 10000
+  min_delete_prefix: 3
+
+profiles:
+  - name: cache
+    key_patterns: ["product:*", "cart:*"]
+    must_expire: true
+    max_ttl: "24h"
+    disposable: true
+
+suspicious_commands:
+  - XADD
+  - XREAD
+  - XRANGE
+  - LPUSH
+  - RPUSH
+  - BLPOP
+  - BRPOP
+  - PUBLISH
+  - SUBSCRIBE
+  - PSUBSCRIBE
+  - PERSIST
+
+max_value_bytes: 1048576
+max_keys_scanned: 5000
+
+scenarios:
+  - name: random-miss
+    type: random_miss
+    probability: 1.0
+  - name: redis-down
+    type: redis_unavailable
+
+probes:
+  - name: catalog
+    http:
+      method: GET
+      url: "http://127.0.0.1:8000/catalog/42"
+      headers: {}
+      body: ""
+    assert:
+      expect: pass
+      status: 200
+      json_schema: "schemas/product.json"
+      json_equals_baseline: ["id", "name", "price"]
+      max_latency_increase: 2.00
+  - name: checkout
+    http:
+      method: POST
+      url: "http://127.0.0.1:8000/checkout"
+      headers:
+        Content-Type: "application/json"
+      body: '{"cart_id":7}'
+    assert:
+      expect: pass
+      status: 200

@@ -1,0 +1,200 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: go test ./...
+
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: go test -race ./...
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: go test -coverprofile=coverage.out ./...
+      - run: |
+          python3 - <<'PY'
+          from collections import defaultdict
+
+          targets = {
+              "internal/config": 90.0,
+              "internal/resp": 90.0,
+              "internal/fault": 85.0,
+              "internal/recorder": 85.0,
+              "internal/proxy": 75.0,
+              "internal/probe": 80.0,
+              "internal/policy": 80.0,
+              "internal/orchestrator": 70.0,
+              "internal/report": 80.0,
+          }
+          covered_by_pkg = defaultdict(int)
+          statements_by_pkg = defaultdict(int)
+          total_covered = 0
+          total_statements = 0
+
+          with open("coverage.out", encoding="utf-8") as profile:
+              for line in profile:
+                  if line.startswith("mode:"):
+                      continue
+                  fields = line.split()
+                  filename = fields[0].split(":", 1)[0]
+                  statements = int(fields[1])
+                  count = int(fields[2])
+                  pkg = "/".join(filename.split("/")[:-1])
+                  if pkg.startswith("cacheproof/"):
+                      pkg = pkg[len("cacheproof/"):]
+
+                  total_statements += statements
+                  statements_by_pkg[pkg] += statements
+                  if count > 0:
+                      total_covered += statements
+                      covered_by_pkg[pkg] += statements
+
+          def percent(covered, statements):
+              return 100.0 * covered / statements if statements else 0.0
+
+          failures = []
+          total = percent(total_covered, total_statements)
+          print(f"total coverage: {total:.1f}%")
+          if total < 80.0:
+              failures.append(f"total coverage {total:.1f}% < 80.0%")
+
+          for pkg, minimum in targets.items():
+              statements = statements_by_pkg[pkg]
+              got = percent(covered_by_pkg[pkg], statements)
+              print(f"{pkg}: {got:.1f}%")
+              if statements == 0:
+                  failures.append(f"{pkg}: no coverage data")
+              elif got < minimum:
+                  failures.append(f"{pkg}: {got:.1f}% < {minimum:.1f}%")
+
+          if failures:
+              raise SystemExit("\n".join(failures))
+          PY
+
+  fuzz-smoke:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: go test -fuzz=FuzzReadCommand -fuzztime=30s ./internal/resp
+
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: go build -o cacheproof ./cmd/cacheproof
+      - run: |
+          cd examples/go-shop
+          REDIS_ADDR=127.0.0.1:6380 SHOP_ADDR=127.0.0.1:8000 go run . &
+          echo $! > /tmp/go-shop.pid
+      - run: |
+          for _ in $(seq 1 100); do
+            if curl -fsS http://127.0.0.1:8000/healthz >/dev/null; then
+              exit 0
+            fi
+            sleep 0.1
+          done
+          exit 1
+      - run: ./cacheproof test --config examples/go-shop/cacheproof.yml --report-json cacheproof.json || test $? -eq 1
+      - run: ./cacheproof test --config examples/go-shop/cacheproof.yml --report-json cacheproof-second.json || test $? -eq 1
+      - run: |
+          python3 - <<'PY'
+          import json
+
+          with open("cacheproof.json", encoding="utf-8") as report_file:
+              report = json.load(report_file)
+          with open("cacheproof-second.json", encoding="utf-8") as report_file:
+              second_report = json.load(report_file)
+
+          scenarios = {scenario["name"]: scenario for scenario in report["scenarios"]}
+          assert scenarios["baseline"]["passed"], "baseline must pass"
+
+          random_miss_probes = {probe["name"]: probe for probe in scenarios["random-miss"]["probes"]}
+          assert random_miss_probes["catalog"]["passed"], "random-miss catalog must pass"
+
+          redis_down_probes = {probe["name"]: probe for probe in scenarios["redis-down"]["probes"]}
+          assert not redis_down_probes["checkout"]["passed"], "redis-down checkout must fail"
+
+          def strip_latency(value):
+              if isinstance(value, dict):
+                  return {key: strip_latency(child) for key, child in value.items() if key != "latency_ms"}
+              if isinstance(value, list):
+                  return [strip_latency(child) for child in value]
+              return value
+
+          assert strip_latency(report) == strip_latency(second_report), "JSON report must be stable except latency_ms"
+          PY
+      - if: always()
+        run: |
+          if [ -f /tmp/go-shop.pid ]; then
+            kill $(cat /tmp/go-shop.pid)
+          fi
+
+  go-install-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: go install ./cmd/cacheproof
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t cacheproof:test .
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -trimpath -ldflags "-s -w -X main.version=ci" ./cmd/cacheproof
